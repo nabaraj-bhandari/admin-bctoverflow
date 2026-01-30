@@ -1,0 +1,34 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Subject {
+  code String @id
+  resources Resource[]
+}
+
+model Resource {
+  id          String
+  subjectCode String
+  title       String
+  githubPath  String
+
+  sections Section[]
+
+  @@id([id, subjectCode])
+}
+
+model Section {
+  id         String
+  resourceId String
+  title      String
+  checksum   String
+  url        String
+
+  @@id([id, resourceId])
+}
