@@ -7,8 +7,8 @@ import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const INPUT_FOLDER = path.join(__dirname, "../../../admin/input");
-const OUTPUT_FOLDER = path.join(__dirname, "../../../public/output");
+const INPUT_FOLDER = path.join(__dirname, "../../admin/input/");
+const OUTPUT_FOLDER = path.join(__dirname, "../../public/output/");
 
 function sha256File(filePath: string) {
   const hash = crypto.createHash("sha256");

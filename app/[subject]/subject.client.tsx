@@ -17,9 +17,8 @@ export default function ClientSubjectPage({
   const [history, setHistory] = useState<PDFSection[][]>([]);
   const [zoom, setZoom] = useState(30);
   const [currentPage, setCurrentPage] = useState(0);
-  const [numPages, setNumPages] = useState<{ [key: string]: number }>({});
+  const [numPages, setNumPages] = useState<Record<string, number>>({});
 
-  // UI State
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [resizing, setResizing] = useState<{
@@ -27,9 +26,8 @@ export default function ClientSubjectPage({
     edge: "left" | "right";
   } | null>(null);
 
-  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
 
-  // --- CORE LOGIC: MAGNETIC SNAP ---
   const applyMagneticLogic = useCallback(
     (items: PDFSection[]): PDFSection[] => {
       const sorted = [...items].sort((a, b) => a.position - b.position);
@@ -44,11 +42,14 @@ export default function ClientSubjectPage({
   );
 
   const updateSectionsWithHistory = useCallback(
-    (newSections: PDFSection[]) => {
-      setHistory((prev) => [...prev, sections]);
-      setSections(newSections);
+    (updater: PDFSection[] | ((prev: PDFSection[]) => PDFSection[])) => {
+      setSections((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        setHistory((h) => [...h, prev]);
+        return next;
+      });
     },
-    [sections],
+    [],
   );
 
   const undo = useCallback(() => {
@@ -58,12 +59,11 @@ export default function ClientSubjectPage({
     setHistory((prev) => prev.slice(0, -1));
   }, [history]);
 
-  // --- DERIVED STATE ---
   const activeSectionId = useMemo(() => {
     const active = sections.find(
       (s) => currentPage >= s.position && currentPage < s.position + s.duration,
     );
-    return active ? active.id : null;
+    return active?.id ?? null;
   }, [sections, currentPage]);
 
   const maxTimelinePage = useMemo(
@@ -72,7 +72,22 @@ export default function ClientSubjectPage({
     [sections],
   );
 
-  // --- THE FIXED SPLIT ---
+  const maxNavigablePage = useMemo(
+    () => Math.max(0, maxTimelinePage - 1),
+    [maxTimelinePage],
+  );
+
+  const currentInfo = useMemo(() => {
+    const s = sections.find(
+      (sec) =>
+        currentPage >= sec.position &&
+        currentPage < sec.position + sec.duration,
+    );
+    return s
+      ? { section: s, page: s.startPage + (currentPage - s.position) }
+      : null;
+  }, [sections, currentPage]);
+
   const splitAtCursor = useCallback(() => {
     const target = sections.find(
       (s) => currentPage >= s.position && currentPage < s.position + s.duration,
@@ -83,13 +98,13 @@ export default function ClientSubjectPage({
     const splitOffset = Math.floor(currentPage - target.position);
     const splitPageInPdf = target.startPage + splitOffset;
 
-    const part1 = {
+    const part1: PDFSection = {
       ...target,
       endPage: splitPageInPdf - 1,
       duration: splitOffset,
     };
 
-    const part2 = {
+    const part2: PDFSection = {
       ...target,
       id: `sec-${Date.now()}`,
       startPage: splitPageInPdf,
@@ -97,12 +112,23 @@ export default function ClientSubjectPage({
     };
 
     const newSections = sections.flatMap((s) =>
-      s.id === target.id ? [part1, part2] : s,
+      s.id === target.id ? [part1, part2] : [s],
     );
     updateSectionsWithHistory(applyMagneticLogic(newSections));
   }, [sections, currentPage, applyMagneticLogic, updateSectionsWithHistory]);
 
-  // --- CLOSE MODAL HANDLER ---
+  const deleteActiveSection = useCallback(() => {
+    if (!activeSectionId) return;
+    updateSectionsWithHistory(
+      applyMagneticLogic(sections.filter((s) => s.id !== activeSectionId)),
+    );
+  }, [
+    activeSectionId,
+    sections,
+    applyMagneticLogic,
+    updateSectionsWithHistory,
+  ]);
+
   const closeRenameModal = useCallback(() => {
     setIsRenameModalOpen(false);
     setRenameValue("");
@@ -118,7 +144,95 @@ export default function ClientSubjectPage({
     closeRenameModal();
   }, [activeSectionId, renameValue, closeRenameModal]);
 
-  // --- KEYBOARD LISTENERS ---
+  const openRenameModal = useCallback(() => {
+    if (!activeSectionId) return;
+    const sec = sections.find((s) => s.id === activeSectionId);
+    if (sec) {
+      setRenameValue(sec.title);
+      setIsRenameModalOpen(true);
+    }
+  }, [activeSectionId, sections]);
+
+  const navigateRight = useCallback(() => {
+    setCurrentPage((p) => Math.min(p + 1, maxNavigablePage));
+  }, [maxNavigablePage]);
+
+  const navigateLeft = useCallback(() => {
+    setCurrentPage((p) => Math.max(p - 1, 0));
+  }, []);
+
+  const zoomIn = useCallback(() => {
+    setZoom((z) => Math.min(z + 10, 150));
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    setZoom((z) => Math.max(z - 5, 10));
+  }, []);
+
+  useEffect(() => {
+    if (!resizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!timelineRef.current) return;
+
+      const rect = timelineRef.current.getBoundingClientRect();
+      const scrollLeft = timelineRef.current.scrollLeft;
+      const mouseX = e.clientX - rect.left + scrollLeft - rect.width / 2;
+      const newPage = Math.round(mouseX / zoom);
+
+      setSections((prev) => {
+        const target = prev.find((s) => s.id === resizing.id);
+        if (!target) return prev;
+
+        let updated: PDFSection;
+
+        if (resizing.edge === "left") {
+          const minPage = 0;
+          const maxPage = target.position + target.duration - 1;
+          const clampedPage = Math.max(minPage, Math.min(newPage, maxPage));
+          const delta = clampedPage - target.position;
+
+          updated = {
+            ...target,
+            position: clampedPage,
+            startPage: target.startPage + delta,
+            duration: target.duration - delta,
+          };
+        } else {
+          const minPage = target.position + 1;
+          const clampedPage = Math.max(minPage, newPage);
+          const newDuration = clampedPage - target.position;
+          const newEndPage = target.startPage + newDuration - 1;
+
+          if (newEndPage > target.endPage) return prev;
+
+          updated = {
+            ...target,
+            duration: newDuration,
+            endPage: newEndPage,
+          };
+        }
+
+        return prev.map((s) => (s.id === resizing.id ? updated : s));
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (resizing) {
+        updateSectionsWithHistory(applyMagneticLogic(sections));
+      }
+      setResizing(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [resizing, zoom, sections, applyMagneticLogic, updateSectionsWithHistory]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
@@ -127,90 +241,75 @@ export default function ClientSubjectPage({
       )
         return;
 
-      // Undo (Shift+U)
-      if (e.shiftKey && e.code === "KeyU") {
-        e.preventDefault();
-        undo();
+      const shortcuts: Record<string, () => void> = {
+        "Shift+KeyU": () => {
+          e.preventDefault();
+          undo();
+        },
+        "Shift++": () => {
+          e.preventDefault();
+          zoomIn();
+        },
+        "Shift+=": () => {
+          e.preventDefault();
+          zoomIn();
+        },
+        "Shift+-": () => {
+          e.preventDefault();
+          zoomOut();
+        },
+        "Shift+_": () => {
+          e.preventDefault();
+          zoomOut();
+        },
+        "Shift+KeyS": () => {
+          e.preventDefault();
+          splitAtCursor();
+        },
+        "Shift+KeyR": () => {
+          e.preventDefault();
+          openRenameModal();
+        },
+      };
+
+      const key = `${e.shiftKey ? "Shift+" : ""}${e.code || e.key}`;
+      const action = shortcuts[key];
+      if (action) {
+        action();
+        return;
       }
 
-      // Zoom (Shift +/-)
-      if (e.shiftKey && (e.key === "+" || e.key === "=")) {
-        e.preventDefault();
-        setZoom((z) => Math.min(z + 10, 150));
-      }
-      if (e.shiftKey && (e.key === "-" || e.key === "_")) {
-        e.preventDefault();
-        setZoom((z) => Math.max(z - 5, 10));
-      }
-
-      // Delete/Backspace
       if ((e.key === "Delete" || e.key === "Backspace") && activeSectionId) {
         e.preventDefault();
-        updateSectionsWithHistory(
-          applyMagneticLogic(sections.filter((s) => s.id !== activeSectionId)),
-        );
+        deleteActiveSection();
       }
 
-      // Split (Shift+S)
-      if (e.shiftKey && e.code === "KeyS") {
-        e.preventDefault();
-        splitAtCursor();
-      }
-
-      // Rename (Shift+R)
-      if (e.shiftKey && e.code === "KeyR" && activeSectionId) {
-        e.preventDefault();
-        const sec = sections.find((s) => s.id === activeSectionId);
-        if (sec) {
-          setRenameValue(sec.title);
-          setIsRenameModalOpen(true);
-        }
-      }
-
-      // Navigation
-      if (e.key === "ArrowRight")
-        setCurrentPage((p) => Math.min(p + 1, maxTimelinePage));
-      if (e.key === "ArrowLeft") setCurrentPage((p) => Math.max(p - 1, 0));
+      if (e.key === "ArrowRight") navigateRight();
+      if (e.key === "ArrowLeft") navigateLeft();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     activeSectionId,
-    sections,
-    maxTimelinePage,
-    splitAtCursor,
     undo,
-    applyMagneticLogic,
-    updateSectionsWithHistory,
+    zoomIn,
+    zoomOut,
+    splitAtCursor,
+    openRenameModal,
+    deleteActiveSection,
+    navigateRight,
+    navigateLeft,
   ]);
 
-  // --- SYNC SCROLL ---
   useEffect(() => {
     if (timelineRef.current) {
-      timelineRef.current.scrollTo({
-        left: currentPage * zoom,
-        behavior: "auto",
-      });
+      timelineRef.current.scrollLeft = currentPage * zoom;
     }
   }, [currentPage, zoom]);
 
-  const currentInfo = useMemo(() => {
-    const s = sections.find(
-      (sec) =>
-        currentPage >= sec.position &&
-        currentPage < sec.position + sec.duration,
-    );
-    return s
-      ? { section: s, page: s.startPage + (currentPage - s.position) }
-      : null;
-  }, [sections, currentPage]);
-
   return (
-    <main
-      className="flex h-screen w-screen bg-[#0f172a] text-slate-100 overflow-hidden select-none p-4 gap-4"
-      onMouseUp={() => setResizing(null)}
-    >
+    <main className="flex h-screen w-screen bg-[#0f172a] text-slate-100 overflow-hidden select-none p-4 gap-4">
       <div className="w-[60%] flex flex-col gap-4 min-w-0">
         <ConfigHeader
           title={resourceTitle}
@@ -218,6 +317,7 @@ export default function ClientSubjectPage({
           sections={sections}
           subject={subject}
         />
+
         <LibrarySidebar
           pdfs={pdfs}
           compressedPdfs={compressedPdfs}
@@ -225,8 +325,12 @@ export default function ClientSubjectPage({
           numPages={numPages}
           setNumPages={setNumPages}
           sections={sections}
-          setSections={(s: any) =>
-            updateSectionsWithHistory(applyMagneticLogic(s))
+          setSections={(updater) =>
+            updateSectionsWithHistory((prev) =>
+              applyMagneticLogic(
+                typeof updater === "function" ? updater(prev) : updater,
+              ),
+            )
           }
           maxTimelinePage={maxTimelinePage}
         />
@@ -235,12 +339,9 @@ export default function ClientSubjectPage({
           timelineRef={timelineRef}
           sections={sections}
           selectedSection={activeSectionId}
-          setSelectedSection={() => {}}
           currentPage={currentPage}
           PIXELS_PER_PAGE={zoom}
           setResizing={setResizing}
-          setDraggingSection={() => {}}
-          setDragOffset={() => {}}
           maxTimelinePage={maxTimelinePage}
         />
       </div>
@@ -251,7 +352,6 @@ export default function ClientSubjectPage({
         currentPage={currentPage}
       />
 
-      {/* Rename Modal */}
       {isRenameModalOpen && (
         <div
           className="fixed inset-0 z-100 flex items-center justify-center bg-black/80 backdrop-blur-sm"
