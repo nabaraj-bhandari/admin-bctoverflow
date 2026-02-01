@@ -8,7 +8,7 @@ datasource db {
 }
 
 model Subject {
-  code String @id
+  code      String     @id
   resources Resource[]
 }
 
@@ -17,18 +17,20 @@ model Resource {
   subjectCode String
   title       String
   githubPath  String
+  sections    Section[]
+  subject     Subject   @relation(fields: [subjectCode], references: [code])
 
-  sections Section[]
-
-  @@id([id, subjectCode])
+  @@id([id, subjectCode]) // This creates the id_subjectCode composite key
 }
 
 model Section {
-  id         String
-  resourceId String
-  title      String
-  checksum   String
-  url        String
+  id          String
+  resourceId  String
+  subjectCode String
+  title       String
+  url         String
+  checksum    String
+  resource    Resource @relation(fields: [resourceId, subjectCode], references: [id, subjectCode])
 
   @@id([id, resourceId])
 }

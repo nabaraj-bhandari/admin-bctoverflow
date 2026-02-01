@@ -1,7 +1,7 @@
 export interface PDFSection {
   id: string;
-  pdfName: string; // e.g., 'compressed-InsightsCG.pdf'
-  title: string; // e.g., 'Introduction to Graphics'
+  pdfName: string;
+  title: string;
   startPage: number;
   endPage: number;
   position: number;

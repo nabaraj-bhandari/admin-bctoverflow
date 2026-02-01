@@ -1,12 +1,21 @@
 "use client";
+import { PDFSection } from "@/lib/types";
 import { FileText } from "lucide-react";
 import { Document, Page } from "react-pdf";
 
+interface PreviewMonitorInterface {
+  currentInfo: {
+    section: PDFSection;
+    page: number;
+  } | null;
+  subject: string;
+  currentPage: number;
+}
 export default function PreviewMonitor({
   currentInfo,
   subject,
   currentPage,
-}: any) {
+}: PreviewMonitorInterface) {
   return (
     <section
       className="w-[40%] bg-slate-900 border border-slate-800 rounded-2xl flex flex-col items-center justify-center relative shadow-2xl overflow-hidden p-6"

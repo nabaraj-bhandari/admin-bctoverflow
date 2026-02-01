@@ -13,7 +13,6 @@ export default function ClientSubjectPage({
   compressedPdfs,
 }: SubjectClientProps) {
   const [resourceTitle, setResourceTitle] = useState("");
-  const [baseUrl, setBaseUrl] = useState("https://cdn.example.com");
   const [sections, setSections] = useState<PDFSection[]>([]);
   const [history, setHistory] = useState<PDFSection[][]>([]);
   const [zoom, setZoom] = useState(30);
@@ -28,7 +27,7 @@ export default function ClientSubjectPage({
     edge: "left" | "right";
   } | null>(null);
 
-  const timelineRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<HTMLDivElement | null>(null);
 
   // --- CORE LOGIC: MAGNETIC SNAP ---
   const applyMagneticLogic = useCallback(
@@ -61,7 +60,6 @@ export default function ClientSubjectPage({
 
   // --- DERIVED STATE ---
   const activeSectionId = useMemo(() => {
-    // We use a small epsilon (0.1) to ensure the playhead selects the section it's "on"
     const active = sections.find(
       (s) => currentPage >= s.position && currentPage < s.position + s.duration,
     );
@@ -76,12 +74,10 @@ export default function ClientSubjectPage({
 
   // --- THE FIXED SPLIT ---
   const splitAtCursor = useCallback(() => {
-    // Find section exactly at current playhead
     const target = sections.find(
       (s) => currentPage >= s.position && currentPage < s.position + s.duration,
     );
 
-    // Prevent split if at the very start of the section (prevents the "." gap)
     if (!target || currentPage === target.position) return;
 
     const splitOffset = Math.floor(currentPage - target.position);
@@ -105,6 +101,22 @@ export default function ClientSubjectPage({
     );
     updateSectionsWithHistory(applyMagneticLogic(newSections));
   }, [sections, currentPage, applyMagneticLogic, updateSectionsWithHistory]);
+
+  // --- CLOSE MODAL HANDLER ---
+  const closeRenameModal = useCallback(() => {
+    setIsRenameModalOpen(false);
+    setRenameValue("");
+  }, []);
+
+  const handleRename = useCallback(() => {
+    if (!activeSectionId) return;
+    setSections((prev) =>
+      prev.map((s) =>
+        s.id === activeSectionId ? { ...s, title: renameValue } : s,
+      ),
+    );
+    closeRenameModal();
+  }, [activeSectionId, renameValue, closeRenameModal]);
 
   // --- KEYBOARD LISTENERS ---
   useEffect(() => {
@@ -203,12 +215,9 @@ export default function ClientSubjectPage({
         <ConfigHeader
           title={resourceTitle}
           setTitle={setResourceTitle}
-          url={baseUrl}
-          setUrl={setBaseUrl}
           sections={sections}
           subject={subject}
         />
-
         <LibrarySidebar
           pdfs={pdfs}
           compressedPdfs={compressedPdfs}
@@ -244,8 +253,14 @@ export default function ClientSubjectPage({
 
       {/* Rename Modal */}
       {isRenameModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#1e293b] border border-slate-700 p-6 rounded-2xl w-96 space-y-4">
+        <div
+          className="fixed inset-0 z-100 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={closeRenameModal}
+        >
+          <div
+            className="bg-[#1e293b] border border-slate-700 p-6 rounded-2xl w-96 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">
               Rename Section
             </h3>
@@ -256,14 +271,12 @@ export default function ClientSubjectPage({
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  setSections((prev) =>
-                    prev.map((s) =>
-                      s.id === activeSectionId
-                        ? { ...s, title: renameValue }
-                        : s,
-                    ),
-                  );
-                  setIsRenameModalOpen(false);
+                  e.preventDefault();
+                  handleRename();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeRenameModal();
                 }
               }}
             />

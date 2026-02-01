@@ -1,8 +1,7 @@
-import fs from "fs";
 import fetch from "node-fetch";
 
-const OWNER = process.env.GITHUB_OWNER!;
-const REPO = process.env.GITHUB_REPO!;
+const OWNER = process.env.GITHUB_OWNER || "nabaraj-bhandari";
+const REPO = process.env.GITHUB_REPO || "academic-resources";
 const BRANCH = process.env.GITHUB_BRANCH || "main";
 const TOKEN = process.env.GITHUB_TOKEN!;
 
@@ -19,17 +18,16 @@ export async function getSha(path: string) {
 
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await res.text());
-  const sha = (await res.json()).sha;
 
-  return sha;
+  return (await res.json()).sha;
 }
 
 export async function uploadPdf(
   githubPath: string,
-  localFilePath: string,
+  contentBuffer: Buffer, // Pass buffer directly
   sha?: string,
 ) {
-  const content = fs.readFileSync(localFilePath).toString("base64");
+  const content = contentBuffer.toString("base64");
 
   const res = await fetch(
     `https://api.github.com/repos/${OWNER}/${REPO}/contents/${githubPath}`,
@@ -49,5 +47,8 @@ export async function uploadPdf(
     },
   );
 
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const errorBody = await res.text();
+    throw new Error(`GitHub Upload Failed: ${res.status} - ${errorBody}`);
+  }
 }

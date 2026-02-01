@@ -3,13 +3,13 @@
 import { PDFSection } from "@/lib/types";
 
 interface TimelineEditorProps {
-  timelineRef: React.RefObject<HTMLDivElement>;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
   sections: PDFSection[];
   selectedSection: string | null;
   setSelectedSection: (id: string | null) => void;
   currentPage: number;
   PIXELS_PER_PAGE: number;
-  setResizing: (val: any) => void;
+  setResizing: (val: { id: string; edge: "left" | "right" }) => void;
   setDraggingSection: (id: string | null) => void;
   setDragOffset: (val: number) => void;
   maxTimelinePage: number;
@@ -26,8 +26,8 @@ export default function TimelineEditor({
   return (
     <div className="h-48 bg-[#1e293b]/50 border border-slate-800 rounded-2xl p-4 shrink-0 relative">
       {/* PLAYHEAD (Blue Vertical Line) */}
-      <div className="absolute left-1/2 top-0 bottom-0 w-[2px] bg-blue-500 z-[60] pointer-events-none -translate-x-1/2">
-        <div className="w-3 h-3 bg-blue-500 rotate-45 -ml-[5px] -mt-1" />
+      <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-blue-500 z-60 pointer-events-none -translate-x-1/2">
+        <div className="w-3 h-3 bg-blue-500 rotate-45 -ml-1.25 -mt-1" />
       </div>
 
       <div
