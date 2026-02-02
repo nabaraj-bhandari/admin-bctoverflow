@@ -90,36 +90,67 @@ const uploadFiles = async (
   sectionsDir: string,
   sectionsMeta: Section[],
 ) => {
+  // Ensure subject exists first
   await prisma.subject.upsert({
     where: { code: subjectCode },
     update: {},
     create: { code: subjectCode },
   });
 
-  const resource = await prisma.resource.upsert({
+  // Check if resource already exists
+  const existingResource = await prisma.resource.findUnique({
     where: {
       subjectCode_id: {
         subjectCode,
         id: resourceId,
       },
     },
-    update: {},
-    create: {
+  });
+
+  let resource;
+  if (existingResource) {
+    console.log("Resource already exists:", existingResource.id);
+    resource = existingResource;
+  } else {
+    console.log("Creating new resource with data:", {
       id: resourceId,
       subjectCode,
       title: resourceTitle,
-    },
-  });
+    });
+
+    // Generate the GitHub path for the resource
+    const githubPath = `resources/${subjectCode}/${resourceId}`;
+
+    console.log("GitHub path:", githubPath);
+
+    // Create resource with all required fields
+    resource = await prisma.resource.create({
+      data: {
+        id: resourceId,
+        subjectCode: subjectCode,
+        title: resourceTitle,
+        githubPath: githubPath,
+      },
+    });
+
+    console.log("Resource created successfully:", resource);
+  }
 
   const conflicts: string[] = [];
 
   for (const file of files) {
-    const sectionId = file.replace(".pdf", "");
+    const slugifiedTitle = file.replace(".pdf", "");
     const localPath = path.join(sectionsDir, file);
     const { hash, buffer } = getFileData(localPath);
 
-    const meta = sectionsMeta.find((s) => s.id === sectionId);
-    const sectionTitle = meta?.title ?? sectionId;
+    const meta = sectionsMeta.find((s) => slugify(s.title) === slugifiedTitle);
+    if (!meta) {
+      console.warn(`Could not find metadata for file: ${file}`);
+      continue;
+    }
+
+    const sectionId = meta.id;
+    const sectionTitle = meta.title;
 
     const existing = await prisma.section.findUnique({
       where: {
@@ -144,13 +175,14 @@ const uploadFiles = async (
     await uploadPdf(githubPath, buffer, sha ?? undefined);
     await delay(200);
 
+    // Create section with direct field assignment
     await prisma.section.create({
       data: {
         id: sectionId,
+        resourceId: resource.id,
+        subjectCode: subjectCode,
         title: sectionTitle,
         checksum: hash,
-        resourceId: resource.id,
-        subjectCode,
       },
     });
   }
@@ -167,12 +199,35 @@ export async function POST(req: NextRequest) {
     // Validation
     if (!subjectCode || !resourceTitle || !sections || sections.length === 0) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        {
+          error:
+            "Missing required fields: subjectCode, resourceTitle, and sections are required",
+        },
         { status: 400 },
       );
     }
 
-    const resourceId = slugify(resourceTitle);
+    // Additional validation
+    if (typeof resourceTitle !== "string" || resourceTitle.trim() === "") {
+      return NextResponse.json(
+        {
+          error:
+            "Resource title cannot be empty. Please provide a valid title.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const trimmedTitle = resourceTitle.trim();
+
+    console.log("Upload request data:", {
+      subjectCode,
+      resourceTitle: trimmedTitle,
+      sectionsCount: sections.length,
+    });
+
+    const resourceId = slugify(trimmedTitle);
+    console.log("Generated resourceId:", resourceId);
 
     const outputBase = path.join(
       process.cwd(),
@@ -195,7 +250,7 @@ export async function POST(req: NextRequest) {
       createdFiles,
       subjectCode,
       resourceId,
-      resourceTitle,
+      trimmedTitle,
       sectionsDir,
       sections,
     );

@@ -16,6 +16,7 @@ model Resource {
   id          String
   subjectCode String
   title       String
+  githubPath  String
 
   sections    Section[]
   subject     Subject   @relation(fields: [subjectCode], references: [code])

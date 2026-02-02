@@ -1,6 +1,6 @@
 "use client";
 
-import { CloudUpload, CheckCircle, AlertCircle } from "lucide-react";
+import { CloudUpload, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { PDFSection } from "@/lib/types";
 
@@ -149,7 +149,7 @@ function UploadButton({ status, isDisabled, onClick }: UploadButtonProps) {
       case "processing":
         return (
           <>
-            <CloudUpload className="w-4 h-4 animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin" />
             PROCESSING...
           </>
         );

@@ -5,6 +5,10 @@ const REPO = process.env.GITHUB_REPO || "academic-resources";
 const BRANCH = process.env.GITHUB_BRANCH || "main";
 const TOKEN = process.env.GITHUB_TOKEN!;
 
+interface GitHubFileResponse {
+  sha: string;
+}
+
 export async function getSha(path: string) {
   const res = await fetch(
     `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`,
@@ -19,7 +23,8 @@ export async function getSha(path: string) {
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await res.text());
 
-  return (await res.json()).sha;
+  const data = (await res.json()) as GitHubFileResponse;
+  return data.sha;
 }
 
 export async function uploadPdf(
