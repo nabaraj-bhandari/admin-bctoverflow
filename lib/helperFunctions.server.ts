@@ -5,7 +5,7 @@ import path from "node:path";
 import fs from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const INPUT_FOLDER = path.join(__dirname, "../admin/input");
+const INPUT_FOLDER = path.join(__dirname, "../input_pdfs");
 const OUTPUT_FOLDER = path.join(__dirname, "../public/output");
 
 export function listSubjects() {
@@ -13,7 +13,10 @@ export function listSubjects() {
     fs.mkdirSync(INPUT_FOLDER, { recursive: true });
     return [];
   }
-  return fs.readdirSync(INPUT_FOLDER);
+
+  return fs.readdirSync(INPUT_FOLDER).filter((name) => {
+    return fs.statSync(path.join(INPUT_FOLDER, name)).isDirectory();
+  });
 }
 
 export function listPDFs(subjectCode: string) {
