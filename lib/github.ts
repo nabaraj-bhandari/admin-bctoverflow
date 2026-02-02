@@ -24,7 +24,7 @@ export async function getSha(path: string) {
 
 export async function uploadPdf(
   githubPath: string,
-  contentBuffer: Buffer, // Pass buffer directly
+  contentBuffer: Buffer,
   sha?: string,
 ) {
   const content = contentBuffer.toString("base64");

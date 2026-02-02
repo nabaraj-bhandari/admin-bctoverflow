@@ -1,9 +1,8 @@
-import { CDN_BASE } from "@/lib/data";
 import { getSha, uploadPdf } from "@/lib/github";
 import { slugify } from "@/lib/helperFunctions";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
-import { existsSync, readFileSync } from "fs";
+import { readFileSync } from "fs";
 import fs from "fs/promises";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
@@ -31,16 +30,10 @@ const splitPdf = async (
   sectionsDir: string,
 ) => {
   const sourceCache = new Map();
-  const createdFiles: string[] = []; // Track created files
+  const createdFiles: string[] = [];
 
   for (const section of sections) {
     const sourcePath = path.join(outputBase, section.sourcePdf);
-
-    if (!existsSync(sourcePath)) {
-      throw new Error(
-        `Source PDF not found at: ${sourcePath}. Did you compress it first?`,
-      );
-    }
 
     if (!sourceCache.has(section.sourcePdf)) {
       const sourceBytes = await fs.readFile(sourcePath);
@@ -77,7 +70,7 @@ const splitPdf = async (
       copiedPages.forEach((p) => newDoc.addPage(p));
 
       const pdfBytes = await newDoc.save();
-      const fileName = `${section.id}.pdf`;
+      const fileName = `${slugify(section.title)}.pdf`;
       await fs.writeFile(path.join(sectionsDir, fileName), pdfBytes);
       createdFiles.push(fileName);
     }
@@ -95,30 +88,26 @@ const uploadFiles = async (
   resourceId: string,
   resourceTitle: string,
   sectionsDir: string,
-  sectionsMetadata: Section[], // Pass section metadata for titles
+  sectionsMeta: Section[],
 ) => {
-  // Ensure subject exists
   await prisma.subject.upsert({
     where: { code: subjectCode },
     update: {},
-    create: {
-      code: subjectCode,
-    },
+    create: { code: subjectCode },
   });
 
-  // Ensure resource exists
   const resource = await prisma.resource.upsert({
     where: {
-      id_subjectCode: { id: resourceId, subjectCode },
+      subjectCode_id: {
+        subjectCode,
+        id: resourceId,
+      },
     },
-    update: {
-      title: resourceTitle,
-    },
+    update: {},
     create: {
       id: resourceId,
       subjectCode,
       title: resourceTitle,
-      githubPath: `resources/${subjectCode}/${resourceId}`,
     },
   });
 
@@ -127,65 +116,47 @@ const uploadFiles = async (
   for (const file of files) {
     const sectionId = file.replace(".pdf", "");
     const localPath = path.join(sectionsDir, file);
+    const { hash, buffer } = getFileData(localPath);
 
-    // Find the section metadata to get the title
-    const sectionMeta = sectionsMetadata.find((s) => s.id === sectionId);
-    const sectionTitle = sectionMeta?.title || sectionId.replace(/-/g, " ");
-
-    const { buffer, hash } = getFileData(localPath);
+    const meta = sectionsMeta.find((s) => s.id === sectionId);
+    const sectionTitle = meta?.title ?? sectionId;
 
     const existing = await prisma.section.findUnique({
       where: {
-        id_resourceId: {
-          id: sectionId,
+        subjectCode_resourceId_id: {
+          subjectCode,
           resourceId: resource.id,
+          id: sectionId,
         },
       },
     });
 
-    // Check if already up to date
-    if (existing && existing.checksum === hash) {
-      console.log(`✓ Skipping ${sectionId}, already up to date.`);
+    if (existing) {
+      if (existing.checksum !== hash) {
+        conflicts.push(sectionId);
+      }
       continue;
     }
 
-    // Check for conflicts (existing but different content)
-    if (existing) {
-      conflicts.push(sectionId);
-      console.warn(`⚠ Conflict detected for section: ${sectionId}`);
-      continue; // Continue to next section instead of stopping
-    }
-
-    const githubPath = `${resource.githubPath}/sections/${file}`;
+    const githubPath = `resources/${subjectCode}/${resourceId}/sections/${file}`;
     const sha = await getSha(githubPath);
 
     await uploadPdf(githubPath, buffer, sha ?? undefined);
     await delay(200);
-
-    const url = `${CDN_BASE}/${githubPath}`;
 
     await prisma.section.create({
       data: {
         id: sectionId,
         title: sectionTitle,
         checksum: hash,
-        url,
-        resource: {
-          connect: {
-            id: resource.id,
-          },
-        },
+        resourceId: resource.id,
+        subjectCode,
       },
     });
-
-    console.log(`✓ Uploaded section: ${sectionTitle}`);
   }
 
-  // If there were conflicts, throw error with all conflicts
   if (conflicts.length > 0) {
-    throw new Error(
-      `Conflicts detected for sections: ${conflicts.join(", ")}. These sections already exist with different content.`,
-    );
+    throw new Error(`Conflicts detected for sections: ${conflicts.join(", ")}`);
   }
 };
 
@@ -226,7 +197,7 @@ export async function POST(req: NextRequest) {
       resourceId,
       resourceTitle,
       sectionsDir,
-      sections, // Pass sections for title lookup
+      sections,
     );
 
     return NextResponse.json({

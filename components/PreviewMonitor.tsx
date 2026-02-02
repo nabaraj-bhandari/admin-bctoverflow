@@ -30,7 +30,6 @@ export default function PreviewMonitor({
   return (
     <section className="w-[40%] bg-slate-900 border border-slate-800 rounded-2xl flex flex-col items-center justify-center relative shadow-2xl overflow-hidden p-6">
       <div className="flex flex-col items-center h-full w-full">
-        {/* PDF Preview */}
         <div className="flex-1 bg-white rounded shadow-2xl overflow-hidden mb-4 max-w-full flex items-center justify-center">
           {error ? (
             <ErrorState message={error} />
@@ -58,7 +57,6 @@ export default function PreviewMonitor({
           )}
         </div>
 
-        {/* Info Bar */}
         <InfoBar
           currentPage={currentPage}
           sectionTitle={currentInfo.section.title}
@@ -68,8 +66,6 @@ export default function PreviewMonitor({
     </section>
   );
 }
-
-// ===== SUBCOMPONENTS =====
 
 function EmptyState() {
   return (

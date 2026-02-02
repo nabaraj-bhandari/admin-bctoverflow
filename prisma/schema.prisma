@@ -16,11 +16,11 @@ model Resource {
   id          String
   subjectCode String
   title       String
-  githubPath  String
+
   sections    Section[]
   subject     Subject   @relation(fields: [subjectCode], references: [code])
 
-  @@id([id, subjectCode]) // This creates the id_subjectCode composite key
+  @@id([subjectCode, id])
 }
 
 model Section {
@@ -28,9 +28,8 @@ model Section {
   resourceId  String
   subjectCode String
   title       String
-  url         String
   checksum    String
-  resource    Resource @relation(fields: [resourceId, subjectCode], references: [id, subjectCode])
+  resource    Resource @relation(fields: [subjectCode, resourceId], references: [subjectCode, id])
 
-  @@id([id, resourceId])
+  @@id([subjectCode, resourceId, id])
 }
