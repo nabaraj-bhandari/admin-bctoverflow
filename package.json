@@ -1,9 +1,9 @@
 {
-  "name": "admin-panel",
+  "name": "admin-bctoverflow",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 8080",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -15,7 +15,6 @@
     "next": "16.1.5",
     "node-fetch": "^3.3.2",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^4.8.69",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-pdf": "^9.1.0"

@@ -34,3 +34,9 @@ model Section {
 
   @@id([subjectCode, resourceId, id])
 }
+
+model MetaData {
+  id         Int      @id @default(1)
+  checksum   String
+  updatedAt  DateTime @updatedAt
+}

@@ -1,12 +1,12 @@
-import { getSha, uploadPdf } from "@/lib/github";
+import { uploadPdf } from "@/lib/github";
 import { slugify } from "@/lib/helperFunctions";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
-import { readFileSync } from "fs";
 import fs from "fs/promises";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
+import { getCatalog, catalogChecksum } from "@/lib/helperFunctions";
 
 type Section = {
   id: string;
@@ -16,178 +16,135 @@ type Section = {
   endPage: number;
 };
 
-function getFileData(filePath: string) {
-  const buffer = readFileSync(filePath);
+type CreatedFile = {
+  fileName: string;
+  sectionId: string;
+};
+
+async function getFileData(filePath: string) {
+  const buffer = await fs.readFile(filePath);
   const hash = crypto.createHash("sha256").update(buffer).digest("hex");
   return { buffer, hash };
 }
-
-const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 const splitPdf = async (
   outputBase: string,
   sections: Section[],
   sectionsDir: string,
-) => {
-  const sourceCache = new Map();
-  const createdFiles: string[] = [];
+): Promise<CreatedFile[]> => {
+  const sourceCache = new Map<string, PDFDocument>();
+  const created: CreatedFile[] = [];
 
   for (const section of sections) {
     const sourcePath = path.join(outputBase, section.sourcePdf);
 
     if (!sourceCache.has(section.sourcePdf)) {
-      const sourceBytes = await fs.readFile(sourcePath);
-      sourceCache.set(section.sourcePdf, await PDFDocument.load(sourceBytes));
+      const bytes = await fs.readFile(sourcePath);
+      sourceCache.set(section.sourcePdf, await PDFDocument.load(bytes));
     }
 
-    const srcDoc = sourceCache.get(section.sourcePdf);
+    const srcDoc = sourceCache.get(section.sourcePdf)!;
     const newDoc = await PDFDocument.create();
 
-    const totalPages = srcDoc.getPageCount();
-    const start = Math.max(0, section.startPage - 1);
-    const end = Math.min(totalPages, section.endPage);
+    const start = section.startPage - 1;
+    const end = section.endPage;
 
-    // Validation
-    if (section.startPage < 1 || section.endPage < section.startPage) {
-      throw new Error(
-        `Invalid page range for section "${section.title}": ${section.startPage}-${section.endPage}`,
-      );
+    if (section.startPage < 1 || end < section.startPage) {
+      throw new Error(`Invalid page range for "${section.title}"`);
     }
 
-    if (end > totalPages) {
-      throw new Error(
-        `Section "${section.title}" end page ${section.endPage} exceeds total pages ${totalPages}`,
-      );
+    if (end > srcDoc.getPageCount()) {
+      throw new Error(`"${section.title}" exceeds page count`);
     }
 
-    const pageIndices = [];
-    for (let i = start; i < end; i++) {
-      pageIndices.push(i);
-    }
+    const pages = await newDoc.copyPages(
+      srcDoc,
+      Array.from({ length: end - start }, (_, i) => start + i),
+    );
 
-    if (pageIndices.length > 0) {
-      const copiedPages = await newDoc.copyPages(srcDoc, pageIndices);
-      copiedPages.forEach((p) => newDoc.addPage(p));
+    pages.forEach((p) => newDoc.addPage(p));
 
-      const pdfBytes = await newDoc.save();
-      const fileName = `${slugify(section.title)}.pdf`;
-      await fs.writeFile(path.join(sectionsDir, fileName), pdfBytes);
-      createdFiles.push(fileName);
-    }
+    const pdfBytes = await newDoc.save();
+    const fileName = `${slugify(section.title)}.pdf`;
+
+    await fs.writeFile(path.join(sectionsDir, fileName), pdfBytes);
+
+    created.push({
+      fileName,
+      sectionId: section.id,
+    });
   }
 
-  // Clear cache to free memory
-  sourceCache.clear();
-
-  return createdFiles;
+  return created;
 };
 
 const uploadFiles = async (
-  files: string[],
+  files: CreatedFile[],
   subjectCode: string,
   resourceId: string,
   resourceTitle: string,
   sectionsDir: string,
   sectionsMeta: Section[],
 ) => {
-  // Ensure subject exists first
   await prisma.subject.upsert({
     where: { code: subjectCode },
     update: {},
     create: { code: subjectCode },
   });
 
-  // Check if resource already exists
-  const existingResource = await prisma.resource.findUnique({
+  const resource = await prisma.resource.upsert({
     where: {
-      subjectCode_id: {
-        subjectCode,
-        id: resourceId,
-      },
+      subjectCode_id: { subjectCode, id: resourceId },
     },
-  });
-
-  let resource;
-  if (existingResource) {
-    console.log("Resource already exists:", existingResource.id);
-    resource = existingResource;
-  } else {
-    console.log("Creating new resource with data:", {
+    update: {},
+    create: {
       id: resourceId,
       subjectCode,
       title: resourceTitle,
-    });
-
-    // Generate the GitHub path for the resource
-    const githubPath = `resources/${subjectCode}/${resourceId}`;
-
-    console.log("GitHub path:", githubPath);
-
-    // Create resource with all required fields
-    resource = await prisma.resource.create({
-      data: {
-        id: resourceId,
-        subjectCode: subjectCode,
-        title: resourceTitle,
-        githubPath: githubPath,
-      },
-    });
-
-    console.log("Resource created successfully:", resource);
-  }
+      githubPath: `resources/${subjectCode}/${resourceId}`,
+    },
+  });
 
   const conflicts: string[] = [];
 
-  for (const file of files) {
-    const slugifiedTitle = file.replace(".pdf", "");
-    const localPath = path.join(sectionsDir, file);
-    const { hash, buffer } = getFileData(localPath);
+  for (const { fileName, sectionId } of files) {
+    const meta = sectionsMeta.find((s) => s.id === sectionId);
+    if (!meta) continue;
 
-    const meta = sectionsMeta.find((s) => slugify(s.title) === slugifiedTitle);
-    if (!meta) {
-      console.warn(`Could not find metadata for file: ${file}`);
-      continue;
-    }
-
-    const sectionId = meta.id;
-    const sectionTitle = meta.title;
+    const { buffer, hash } = await getFileData(
+      path.join(sectionsDir, fileName),
+    );
 
     const existing = await prisma.section.findUnique({
       where: {
         subjectCode_resourceId_id: {
           subjectCode,
-          resourceId: resource.id,
+          resourceId,
           id: sectionId,
         },
       },
     });
 
     if (existing) {
-      if (existing.checksum !== hash) {
-        conflicts.push(sectionId);
-      }
+      if (existing.checksum !== hash) conflicts.push(sectionId);
       continue;
     }
 
-    const githubPath = `resources/${subjectCode}/${resourceId}/sections/${file}`;
-    const sha = await getSha(githubPath);
+    const githubPath = `${resource.githubPath}/sections/${fileName}`;
+    await uploadPdf(githubPath, buffer);
 
-    await uploadPdf(githubPath, buffer, sha ?? undefined);
-    await delay(200);
-
-    // Create section with direct field assignment
     await prisma.section.create({
       data: {
         id: sectionId,
-        resourceId: resource.id,
-        subjectCode: subjectCode,
-        title: sectionTitle,
+        subjectCode,
+        resourceId,
+        title: meta.title,
         checksum: hash,
       },
     });
   }
 
-  if (conflicts.length > 0) {
+  if (conflicts.length) {
     throw new Error(`Conflicts detected for sections: ${conflicts.join(", ")}`);
   }
 };
@@ -196,38 +153,22 @@ export async function POST(req: NextRequest) {
   try {
     const { subjectCode, resourceTitle, sections } = await req.json();
 
-    // Validation
-    if (!subjectCode || !resourceTitle || !sections || sections.length === 0) {
+    if (!subjectCode || !resourceTitle || !sections?.length) {
       return NextResponse.json(
-        {
-          error:
-            "Missing required fields: subjectCode, resourceTitle, and sections are required",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Additional validation
-    if (typeof resourceTitle !== "string" || resourceTitle.trim() === "") {
-      return NextResponse.json(
-        {
-          error:
-            "Resource title cannot be empty. Please provide a valid title.",
-        },
+        { error: "subjectCode, resourceTitle, sections required" },
         { status: 400 },
       );
     }
 
     const trimmedTitle = resourceTitle.trim();
-
-    console.log("Upload request data:", {
-      subjectCode,
-      resourceTitle: trimmedTitle,
-      sectionsCount: sections.length,
-    });
+    if (!trimmedTitle) {
+      return NextResponse.json(
+        { error: "Resource title cannot be empty" },
+        { status: 400 },
+      );
+    }
 
     const resourceId = slugify(trimmedTitle);
-    console.log("Generated resourceId:", resourceId);
 
     const outputBase = path.join(
       process.cwd(),
@@ -235,17 +176,12 @@ export async function POST(req: NextRequest) {
       "output",
       subjectCode,
     );
-    const resourceDir = path.join(outputBase, resourceId);
-    const sectionsDir = path.join(resourceDir, "sections");
 
+    const sectionsDir = path.join(outputBase, resourceId, "sections");
     await fs.mkdir(sectionsDir, { recursive: true });
 
-    // Split PDFs and get list of created files
     const createdFiles = await splitPdf(outputBase, sections, sectionsDir);
 
-    console.log(`Created ${createdFiles.length} section PDFs`);
-
-    // Upload files with metadata
     await uploadFiles(
       createdFiles,
       subjectCode,
@@ -254,6 +190,15 @@ export async function POST(req: NextRequest) {
       sectionsDir,
       sections,
     );
+
+    const catalog = await getCatalog();
+    const checksum = catalogChecksum(catalog);
+
+    await prisma.metaData.upsert({
+      where: { id: 1 },
+      update: { checksum },
+      create: { id: 1, checksum },
+    });
 
     return NextResponse.json({
       success: true,
